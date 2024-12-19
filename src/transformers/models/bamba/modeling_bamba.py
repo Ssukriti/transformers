@@ -1535,7 +1535,6 @@ class BambaForCausalLM(BambaPreTrainedModel, GenerationMixin):
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
             cache_position=cache_position,
-            **kwargs,
         )
 
         hidden_states = outputs[0]
