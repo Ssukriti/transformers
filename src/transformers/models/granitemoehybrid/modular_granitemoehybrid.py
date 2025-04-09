@@ -221,8 +221,8 @@ class GraniteMoeHybridDecoderLayer(GraniteMoeSharedDecoderLayer):
         # if output_attentions:
         #     outputs += (self_attn_weights,)
 
-        # if use_cache:
-        #     outputs += (present_key_value,)
+        if use_cache:
+             outputs += (past_key_value,)
 
         if output_router_logits:
             outputs += (router_logits,)

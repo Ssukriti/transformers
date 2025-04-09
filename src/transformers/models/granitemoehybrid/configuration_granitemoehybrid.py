@@ -134,7 +134,7 @@ class GraniteMoeHybridConfig(PretrainedConfig):
         max_position_embeddings=2048,
         initializer_range=0.02,
         rms_norm_eps=1e-6,
-        use_cache=False,
+        use_cache=True,
         pad_token_id=None,
         bos_token_id=1,
         eos_token_id=2,
@@ -165,6 +165,8 @@ class GraniteMoeHybridConfig(PretrainedConfig):
         mamba_expand=2,
         mamba_chunk_size=256,
         mamba_conv_bias=True,
+        logits_to_keep=1,
+        attn_layer_indices=None,
         # confirm this variable if needed or not
         mamba_proj_bias=False,
         # mla variables
@@ -199,6 +201,7 @@ class GraniteMoeHybridConfig(PretrainedConfig):
         self.logits_scaling = logits_scaling
         self.residual_multiplier = residual_multiplier
         self.attention_multiplier = attention_multiplier
+        self.attn_layer_indices = attn_layer_indices
 
         self.num_local_experts = num_local_experts
         self.num_experts_per_tok = num_experts_per_tok
@@ -234,6 +237,7 @@ class GraniteMoeHybridConfig(PretrainedConfig):
         self.mamba_conv_bias = mamba_conv_bias
         self.mamba_proj_bias = mamba_proj_bias
         self.mamba_expand = mamba_expand
+        self.logits_to_keep=logits_to_keep
 
         self.mla_query_comp_size = mla_query_comp_size
         self.mla_key_value_comp_size = mla_key_value_comp_size
@@ -250,5 +254,11 @@ class GraniteMoeHybridConfig(PretrainedConfig):
 
         rope_config_validation(self)
 
+    @property
+    def layers_block_type(self):
+        return [
+            "attention" if (self.attn_layer_indices and i in self.attn_layer_indices) else "mamba"
+            for i in range(self.num_hidden_layers)
+        ]
 
 __all__ = ["GraniteMoeHybridConfig"]

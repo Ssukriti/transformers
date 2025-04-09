@@ -140,6 +140,7 @@ class GraniteMoeSharedConfig(PretrainedConfig):
         rope_scaling=None,
         attention_bias=False,
         attention_dropout=0.0,
+        attn_layer_indices=None,
         embedding_multiplier=1.0,
         logits_scaling=1.0,
         residual_multiplier=1.0,
@@ -172,6 +173,7 @@ class GraniteMoeSharedConfig(PretrainedConfig):
 
         self.attention_bias = attention_bias
         self.attention_dropout = attention_dropout
+        self.attn_layer_indices = attn_layer_indices
 
         self.embedding_multiplier = embedding_multiplier
         self.logits_scaling = logits_scaling
@@ -194,5 +196,11 @@ class GraniteMoeSharedConfig(PretrainedConfig):
 
         rope_config_validation(self)
 
+    @property
+    def layers_block_type(self):
+        return [
+            "attention" if (self.attn_layer_indices and i in self.attn_layer_indices) else "mamba"
+            for i in range(self.num_hidden_layers)
+        ]
 
 __all__ = ["GraniteMoeSharedConfig"]
