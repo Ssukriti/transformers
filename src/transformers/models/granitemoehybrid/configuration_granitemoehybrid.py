@@ -134,7 +134,7 @@ class GraniteMoeHybridConfig(PretrainedConfig):
         max_position_embeddings=2048,
         initializer_range=0.02,
         rms_norm_eps=1e-6,
-        use_cache=True,
+        use_cache=False,
         pad_token_id=None,
         bos_token_id=1,
         eos_token_id=2,
@@ -165,12 +165,12 @@ class GraniteMoeHybridConfig(PretrainedConfig):
         mamba_expand=2,
         mamba_chunk_size=256,
         mamba_conv_bias=True,
-        logits_to_keep=1,
-        attn_layer_indices=None,
         # confirm this variable if needed or not
         mamba_proj_bias=False,
+        logits_to_keep=1,
         # mla variables
         mla_dropout = 0,
+        attn_layer_indices = None,
         # rename attention_dropout to mla_softmax_dropout
         mla_softmax_dropout=0.0,
         mla_query_comp_size = 384,
@@ -201,7 +201,6 @@ class GraniteMoeHybridConfig(PretrainedConfig):
         self.logits_scaling = logits_scaling
         self.residual_multiplier = residual_multiplier
         self.attention_multiplier = attention_multiplier
-        self.attn_layer_indices = attn_layer_indices
 
         self.num_local_experts = num_local_experts
         self.num_experts_per_tok = num_experts_per_tok
@@ -237,8 +236,8 @@ class GraniteMoeHybridConfig(PretrainedConfig):
         self.mamba_conv_bias = mamba_conv_bias
         self.mamba_proj_bias = mamba_proj_bias
         self.mamba_expand = mamba_expand
-        self.logits_to_keep=logits_to_keep
-
+        self.logits_to_keep = logits_to_keep
+        self.attn_layer_indices = attn_layer_indices
         self.mla_query_comp_size = mla_query_comp_size
         self.mla_key_value_comp_size = mla_key_value_comp_size
         self.mla_dropout = mla_dropout

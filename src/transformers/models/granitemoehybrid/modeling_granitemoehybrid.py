@@ -115,7 +115,9 @@ class GraniteMultiHeadLatentAttention(nn.Module):
             (self.query_compression_size, self.key_value_compression_size, self.key_value_compression_size), dim=-1
         )
         if past_key_value is not None:
-            key, value = past_key_value.update(key, value, self.layer_idx)
+            key, value = past_key_value.update(key.unsqueeze(1), value.unsqueeze(1), self.layer_idx)
+            key = key.squeeze(1)
+            value = value.squeeze(1)
 
         query = self.query_up_projection(query)
         key = self.key_up_projection(key)
@@ -148,7 +150,7 @@ class GraniteMultiHeadLatentAttention(nn.Module):
         hidden_states = self.c_proj(hidden_states)
         hidden_states = self.dropout(hidden_states)
 
-        return hidden_states
+        return hidden_states, past_key_value
 
     def _get_softmax_scale(self) -> float:
         if self.attention_multiplier is None:
@@ -176,7 +178,7 @@ class HybridMambaAttentionDynamicCache(modeling_jamba.HybridMambaAttentionDynami
 
     def __init__(self, config: GraniteMoeHybridConfig, batch_size, dtype=torch.float16, device=None):
         super().__init__(config, batch_size, dtype, device)
-        self.layers_block_type = config.layers_block_type
+        self.layers_block_type = config.layer_types
         self.has_previous_state = False  # only used by mamba
         conv_kernel_size = config.mamba_d_conv
         ssm_state_size = config.mamba_d_state
@@ -185,7 +187,7 @@ class HybridMambaAttentionDynamicCache(modeling_jamba.HybridMambaAttentionDynami
         self.ssm_states = []
         self.transformer_layers = []
         for i in range(config.num_hidden_layers):
-            if self.layers_block_type[i] == "mamba":
+            if self.layers_block_type[i] == "mamba2":
                 self.conv_states += [
                     torch.zeros(
                         batch_size,
@@ -577,7 +579,15 @@ class GraniteMoeHybridMambaLayer(nn.Module):
             and cache_position is not None
             and cache_position[0] > 0
         )
-
+        print("\n use precomputed states around 570 modeling: ", use_precomputed_states)
+        print("\n cache params ", cache_params)
+        print("\n", cache_params.has_previous_state)
+        print(seq_len==1)
+        print(cache_params.conv_states[self.layer_idx].shape[0]
+            == cache_params.ssm_states[self.layer_idx].shape[0]
+            == batch_size)
+        print(cache_position is not None)
+        print(cache_position[0] > 0)
         # 2. Convolution sequence transformation
         if use_precomputed_states:
             cache_params.conv_states[self.layer_idx] = cache_params.conv_states[self.layer_idx].roll(shifts=-1, dims=-1)
@@ -755,6 +765,7 @@ class GraniteMoeHybridMambaLayer(nn.Module):
 
         # 4. Final linear projection
         contextualized_states = self.out_proj(scan_output.to(dtype))  # [batch, seq_len, hidden_size]
+        print("\n contextualized_states from bamba in modeling granite: ", contextualized_states)
         return contextualized_states
     # fmt: on
 
@@ -1033,16 +1044,17 @@ class GraniteMoeHybridDecoderLayer(nn.Module):
 
         hidden_states = self.input_layernorm(hidden_states)
 
+        print("\n past key values in HybridDecoder: ", past_key_value.key_cache)
+        print("\n past value values in HybridDecoder: ", past_key_value.value_cache)
         # check implementation of this function
         # TODO - rename to something else
-        hidden_states = self._self_attn_forward(
+        hidden_states, present_key_value = self._self_attn_forward(
             hidden_states=hidden_states,
             attention_mask=attention_mask,
             past_key_value=past_key_value,
             cache_position=cache_position,
         )
-
-        
+        print("\n hidden states after attn forward HybridDecoder: ", hidden_states)
         hidden_states = residual + hidden_states * self.residual_multiplier
 
         # Fully Connected
@@ -1066,9 +1078,8 @@ class GraniteMoeHybridDecoderLayer(nn.Module):
         # if output_attentions:
         #     outputs += (self_attn_weights,)
 
-        # if use_cache:
-        #     outputs += (present_key_value,)
-
+        if use_cache:
+            outputs += (present_key_value,)
         if output_router_logits:
             outputs += (router_logits,)
 
@@ -1092,8 +1103,9 @@ class GraniteMoeHybridDecoderLayer(nn.Module):
             return self.self_attn(
                 hidden_states=hidden_states,
                 cache_position=cache_position,
+                cache_params=past_key_value,
                 attention_mask=attention_mask,
-            )
+            ), past_key_value
 
 
 # TO DO update docstring
@@ -1344,9 +1356,10 @@ class GraniteMoeHybridModel(GraniteMoeHybridPreTrainedModel):
         output_hidden_states = (
             output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
         )
+
         use_cache = use_cache if use_cache is not None else self.config.use_cache
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
-
+        print("\n use cache value: ",use_cache)
         if (input_ids is None) ^ (inputs_embeds is not None):
             raise ValueError("You must specify exactly one of input_ids or inputs_embeds")
 
@@ -1423,6 +1436,7 @@ class GraniteMoeHybridModel(GraniteMoeHybridPreTrainedModel):
                     output_router_logits=output_router_logits,
                     position_embeddings=position_embeddings,
                 )
+                #print("\n layer outputs: ", layer_outputs)
 
             hidden_states = layer_outputs[0]
 
@@ -1809,6 +1823,15 @@ class GraniteMoeHybridForCausalLM(GraniteMoeHybridPreTrainedModel, GenerationMix
             router_logits=outputs.router_logits,
         )
 
+    @staticmethod
+    def _reorder_cache(past_key_values, beam_idx):
+        reordered_past = ()
+        for layer_past in past_key_values:
+            reordered_past += (
+                tuple(past_state.index_select(0, beam_idx.to(past_state.device)) for past_state in layer_past),
+            )
+        return reordered_past
+
     def prepare_inputs_for_generation(
         self,
         input_ids,
@@ -1822,6 +1845,7 @@ class GraniteMoeHybridForCausalLM(GraniteMoeHybridPreTrainedModel, GenerationMix
     ):
         # Overwitten -- has a unique cache type, `HybridMambaAttentionDynamicCache`
 
+        print("\n in prepare override hybridmoe: ", past_key_values)
         empty_past_kv = past_key_values is None
 
         # If we have cache: let's slice `input_ids` through `cache_position`, to keep only the unprocessed tokens
@@ -1865,16 +1889,7 @@ class GraniteMoeHybridForCausalLM(GraniteMoeHybridPreTrainedModel, GenerationMix
                 "cache_position": cache_position,
             }
         )
-        return model_inputs
-    
-    @staticmethod
-    def _reorder_cache(past_key_values, beam_idx):
-        reordered_past = ()
-        for layer_past in past_key_values:
-            reordered_past += (
-                tuple(past_state.index_select(0, beam_idx.to(past_state.device)) for past_state in layer_past),
-            )
-        return reordered_past
+        return model_inputs 
 
     def _supports_default_dynamic_cache(self) -> bool:
         """
